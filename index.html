@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Nova Strike: Mobile Ready</title>
+    <style>
+        :root { --neon-blue: #00f3ff; --neon-pink: #ff00ff; --bg-dark: #0a0a12; }
+        body { 
+            margin: 0; background: var(--bg-dark); color: white; 
+            font-family: sans-serif; overflow: hidden; touch-action: none;
+            display: flex; justify-content: center; align-items: center; height: 100vh;
+        }
+        #game-wrapper {
+            position: relative; width: 100vw; height: 100vh;
+            max-width: 800px; max-height: 600px; aspect-ratio: 4/3;
+        }
+        canvas { width: 100%; height: 100%; background: #000; border: 1px solid var(--neon-blue); }
+        .ui-layer {
+            position: absolute; inset: 0; display: flex; flex-direction: column;
+            justify-content: center; align-items: center; background: rgba(10, 10, 18, 0.9);
+            padding: 20px; text-align: center;
+        }
+        .hidden { display: none !important; }
+        .menu-btn {
+            background: none; border: 1px solid var(--neon-pink); color: var(--neon-pink);
+            padding: 15px 30px; margin: 10px; font-size: 1.1rem; cursor: pointer; width: 80%;
+        }
+        /* Touch Controls */
+        #touch-controls {
+            position: absolute; bottom: 20px; left: 20px; right: 20px;
+            display: flex; justify-content: space-between; pointer-events: none;
+        }
+        .stick { 
+            width: 100px; height: 100px; background: rgba(255,255,255,0.1); 
+            border-radius: 50%; pointer-events: auto; border: 1px solid var(--neon-blue);
+        }
+        #shoot-btn {
+            width: 80px; height: 80px; background: rgba(255,0,255,0.2);
+            border-radius: 50%; pointer-events: auto; border: 2px solid var(--neon-pink);
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-wrapper">
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    
+    <div id="main-menu" class="ui-layer">
+        <h1 style="color: var(--neon-blue)">NOVA STRIKE</h1>
+        <button class="menu-btn" onclick="startGame()">START GAME</button>
+        <button class="menu-btn" onclick="toggleUI('hangar')">HANGAR</button>
+    </div>
+
+    <div id="hangar" class="ui-layer hidden">
+        <h2>HANGAR</h2>
+        <div id="h-credits"></div>
+        <button class="menu-btn" onclick="buyUpgrade('fireRate')">UPGRADE FIRE</button>
+        <button class="menu-btn" onclick="toggleUI('main-menu')">BACK</button>
+    </div>
+
+    <div id="touch-controls" class="hidden">
+        <div id="joystick" class="stick"></div>
+        <div id="shoot-btn"></div>
+    </div>
+</div>
+
+<script>
+/** GAME LOGIC **/
+let canvas = document.getElementById('gameCanvas'), ctx = canvas.getContext('2d');
+let gameState = JSON.parse(localStorage.getItem('nsSave')) || { credits: 0, upgrades: { speed: 1, fire: 1 } };
+let isPlaying = false, score = 0, enemies = [], bullets = [], particles = [];
+let player = { x: 400, y: 550, lastShot: 0 };
+let touchPos = { x: 0, y: 0, active: false };
+
+// Save/Load
+function save() { localStorage.setItem('nsSave', JSON.stringify(gameState)); }
+
+// Touch Events
+const joy = document.getElementById('joystick');
+joy.addEventListener('touchstart', e => touchPos.active = true);
+joy.addEventListener('touchmove', e => {
+    let rect = joy.getBoundingClientRect();
+    touchPos.x = (e.touches[0].clientX - (rect.left + 50)) / 10;
+    touchPos.y = (e.touches[0].clientY - (rect.top + 50)) / 10;
+});
+joy.addEventListener('touchend', () => { touchPos.active = false; touchPos.x = 0; touchPos.y = 0; });
+
+document.getElementById('shoot-btn').addEventListener('touchstart', (e) => { e.preventDefault(); keys['Space'] = true; });
+document.getElementById('shoot-btn').addEventListener('touchend', () => keys['Space'] = false);
+
+let keys = {};
+window.onkeydown = e => keys[e.code] = true;
+window.onkeyup = e => keys[e.code] = false;
+
+function startGame() {
+    isPlaying = true; enemies = []; bullets = []; score = 0;
+    toggleUI('none');
+    if ('ontouchstart' in window) document.getElementById('touch-controls').classList.remove('hidden');
+    loop();
+}
+
+function loop() {
+    if (!isPlaying) return;
+    ctx.fillStyle = '#000'; ctx.fillRect(0,0,800,600);
+
+    // Movement
+    let s = 4 + gameState.upgrades.speed;
+    if (keys['ArrowLeft'] || keys['KeyA']) player.x -= s;
+    if (keys['ArrowRight'] || keys['KeyD']) player.x += s;
+    if (touchPos.active) { player.x += touchPos.x * 0.8; player.y += touchPos.y * 0.8; }
+    
+    // Constraints
+    player.x = Math.max(0, Math.min(770, player.x));
+    player.y = Math.max(0, Math.min(570, player.y));
+
+    // Shooting
+    if (keys['Space'] && Date.now() - player.lastShot > 400 - (gameState.upgrades.fire * 40)) {
+        bullets.push({x: player.x+15, y: player.y});
+        player.lastShot = Date.now();
+    }
+
+    // Draw Player
+    ctx.strokeStyle = '#00f3ff'; ctx.strokeRect(player.x, player.y, 30, 30);
+
+    // Enemies & Collision
+    if (Math.random() < 0.03) enemies.push({x: Math.random()*770, y: -30});
+    enemies.forEach((en, i) => {
+        en.y += 3;
+        ctx.strokeStyle = '#ff00ff'; ctx.strokeRect(en.x, en.y, 30, 30);
+        if (en.y > 600) enemies.splice(i,1);
+        // Player hit
+        if (Math.abs(player.x - en.x) < 25 && Math.abs(player.y - en.y) < 25) {
+            isPlaying = false;
+            save();
+            alert("Score: " + score);
+            location.reload();
+        }
+    });
+
+    bullets.forEach((b, i) => {
+        b.y -= 8; ctx.fillStyle = '#fff'; ctx.fillRect(b.x, b.y, 4, 10);
+        enemies.forEach((en, ei) => {
+            if (b.x > en.x && b.x < en.x+30 && b.y < en.y+30) {
+                enemies.splice(ei, 1); bullets.splice(i, 1);
+                score += 10; gameState.credits += 1;
+            }
+        });
+    });
+
+    requestAnimationFrame(loop);
+}
+
+function toggleUI(id) {
+    document.querySelectorAll('.ui-layer').forEach(l => l.classList.add('hidden'));
+    if(id !== 'none') document.getElementById(id).classList.remove('hidden');
+    if(id === 'hangar') document.getElementById('h-credits').innerText = "Credits: " + gameState.credits;
+}
+
+function buyUpgrade(type) {
+    if (gameState.credits >= 10) { 
+        gameState.credits -= 10; gameState.upgrades.fire++; 
+        save(); toggleUI('hangar');
+    }
+}
+</script>
+</body>
+</html>
